@@ -18,8 +18,11 @@ canvas{display:block;}
 #hud-bot{display:flex;justify-content:space-between;align-items:center;padding:5px 10px;background:#000;border:1px solid #1a1a1a;border-top:none;}
 .ctl{display:flex;gap:4px;align-items:center;}
 .key{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border:1px solid #2a2a2a;font-size:9px;color:#444;}
+.key.on{border-color:#7ecba1;color:#7ecba1;cursor:pointer;}
+.key.off{border-color:#333;color:#333;cursor:pointer;}
 .cl{font-size:9px;color:#2a2a2a;margin:0 3px;}
 #overlay,#gameover,#win{position:absolute;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.92);display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;z-index:10;padding:2rem;}
+#overlay{display:none;}
 #gameover,#win{display:none;}
 .ot{font-size:26px;letter-spacing:.15em;margin-bottom:5px;}
 .og{color:#7ecba1;}.or{color:#c84a4a;}
@@ -34,6 +37,14 @@ canvas{display:block;}
 .ticker-wrap{overflow:hidden;height:14px;background:#000;border:1px solid #1a1a1a;border-top:none;}
 .ticker{white-space:nowrap;font-size:8px;color:#191919;letter-spacing:.1em;line-height:14px;display:inline-block;animation:tick 40s linear infinite;}
 @keyframes tick{from{transform:translateX(0)}to{transform:translateX(-50%)}}
+/* Boot screen */
+#boot{position:absolute;top:0;left:0;width:100%;height:100%;background:#000;z-index:20;padding:20px 22px;overflow:hidden;transition:opacity .7s;}
+.boot-line{font-size:9px;letter-spacing:.1em;line-height:2;color:#1e3828;white-space:pre;font-family:'Share Tech Mono',monospace;}
+.boot-line.hi{color:#3a6848;}
+.boot-line.warn{color:#c8751a;}
+.boot-line.crit{color:#c84a4a;}
+#boot-cursor{display:inline-block;width:7px;height:10px;background:#1e3828;animation:blink .9s step-end infinite;vertical-align:middle;margin-left:2px;}
+@keyframes blink{50%{opacity:0}}
 </style>
 </head>
 <body>
@@ -47,6 +58,9 @@ canvas{display:block;}
 </div>
 <div id="canvas-wrap">
   <canvas id="c" width="640" height="480"></canvas>
+  <!-- Boot screen -->
+  <div id="boot"><div id="boot-lines"></div><div id="boot-cursor"></div></div>
+  <!-- Menu -->
   <div id="overlay">
     <div class="ot og">ARTICLE 17</div>
     <div class="os">LETHE CORP · THERMAL SATELLITE · ENFORCEMENT DIVISION</div>
@@ -73,7 +87,7 @@ canvas{display:block;}
 <div id="hud-bot">
   <div class="ctl"><span class="cl">MOVE</span><div class="key">W</div><div class="key">A</div><div class="key">S</div><div class="key">D</div><span class="cl" style="margin-left:6px;">or arrows</span></div>
   <div style="font-size:9px;color:#1a1a1a;letter-spacing:.1em;">LETHE CORP · SATELLITE UPLINK ACTIVE</div>
-  <div class="ctl"><span class="cl">HIDE</span><div class="key">H</div><span class="cl" style="margin-left:6px;">FILE</span><div class="key">F</div></div>
+  <div class="ctl"><span class="cl">HIDE</span><div class="key">H</div><span class="cl" style="margin-left:6px;">FILE</span><div class="key">F</div><span class="cl" style="margin-left:8px;">SND</span><div class="key on" id="mute-btn" onclick="toggleMute()" title="M — toggle sound">M</div></div>
 </div>
 <div class="ticker-wrap">
   <span class="ticker">LETHE CORP SATELLITE UPLINK ACTIVE &nbsp;·&nbsp; THERMAL IMAGING ACTIVE &nbsp;·&nbsp; 31 EU REGIONS COVERED &nbsp;·&nbsp; DELETION COMPLIANCE 100% &nbsp;·&nbsp; OPEN REQUESTS: 31 &nbsp;·&nbsp; ERASURE UNITS DEPLOYED: 7 &nbsp;·&nbsp; GDPR/ART17/ENFORCEMENT &nbsp;·&nbsp; LEGAL &nbsp;·&nbsp; COMPLIANT &nbsp;·&nbsp; PERMANENT &nbsp;·&nbsp; YOUR DATA, HANDLED WITH CARE &nbsp;·&nbsp; &nbsp;&nbsp;&nbsp;&nbsp; LETHE CORP SATELLITE UPLINK ACTIVE &nbsp;·&nbsp; THERMAL IMAGING ACTIVE &nbsp;·&nbsp; 31 EU REGIONS COVERED &nbsp;·&nbsp; DELETION COMPLIANCE 100% &nbsp;·&nbsp; OPEN REQUESTS: 31 &nbsp;·&nbsp; ERASURE UNITS DEPLOYED: 7 &nbsp;·&nbsp; GDPR/ART17/ENFORCEMENT &nbsp;·&nbsp; LEGAL &nbsp;·&nbsp; COMPLIANT &nbsp;·&nbsp; PERMANENT &nbsp;·&nbsp; YOUR DATA, HANDLED WITH CARE &nbsp;·&nbsp;</span>
@@ -81,21 +95,193 @@ canvas{display:block;}
 </div>
 
 <script>
+// ─── CANVAS SETUP ────────────────────────────────────────────────────────────
 const canvas=document.getElementById('c');
 const ctx=canvas.getContext('2d');
 const CW=640,CH=480,TILE=32,COLS=20,ROWS=15;
-const FOV_R=95; // player visibility radius (px)
+const FOV_R=95;
 
-// Offscreen fog canvas
 const fogCvs=document.createElement('canvas');
 fogCvs.width=CW;fogCvs.height=CH;
 const fogCtx=fogCvs.getContext('2d');
 
-// Offscreen noise canvas — putImageData here, drawImage onto main (preserves compositing)
 const noiseCvs=document.createElement('canvas');
 noiseCvs.width=CW;noiseCvs.height=CH;
 const noiseCtx=noiseCvs.getContext('2d');
 
+// ─── AUDIO ───────────────────────────────────────────────────────────────────
+let AC=null, masterGain=null, muted=false, musicTick=null, stepIdx=0;
+
+// D minor — NES Terminator palette
+const D2=73.4,F2=87.3,A2=110,C3=130.8,D3=146.8,F3=174.6,A3=220,
+      C4=261.6,D4=293.7,F4=349.2,A4=440,D5=587.3;
+
+const MUSIC={
+  patrol:{
+    spb:0.30, // seconds per beat (8th note @ 100 BPM)
+    bass:[D2,0,F2,0,A2,0,F2,0,  D2,0,F2,0,A2,0,C3,0],
+    lead:[A3,0,0,0,F3,0,0,0,    A3,0,0,0,D3,0,0,0],
+    bv:0.14, lv:0.055,
+  },
+  alert:{
+    spb:0.185,
+    bass:[D2,F2,A2,F2, D2,F2,C3,F2, D2,A2,F2,A2, D2,C3,A2,C3],
+    lead:[D4,0,A3,0,   F3,0,A3,0,   D4,0,C4,0,   A3,0,F3,0],
+    bv:0.18, lv:0.09,
+  },
+  chase:{
+    spb:0.105,
+    bass:[D2,A2,D3,A2, F2,A2,D3,A2, D2,A2,C3,A2, F2,C3,A2,F2],
+    lead:[D4,F4,A4,F4, D4,F4,A4,F4, C4,F4,A4,F4, D4,A4,F4,D4],
+    bv:0.22, lv:0.13,
+  },
+};
+
+function initAudio(){
+  if(AC)return;
+  AC=new(window.AudioContext||window.webkitAudioContext)();
+  masterGain=AC.createGain();
+  masterGain.gain.value=muted?0:0.85;
+  masterGain.connect(AC.destination);
+}
+
+function playNote(freq,dur,vol,type='square'){
+  if(!AC||!freq)return;
+  const t=AC.currentTime;
+  const osc=AC.createOscillator();
+  const g=AC.createGain();
+  g.gain.setValueAtTime(0,t);
+  g.gain.linearRampToValueAtTime(vol,t+0.008);
+  g.gain.setValueAtTime(vol,t+dur*0.65);
+  g.gain.linearRampToValueAtTime(0,t+dur);
+  osc.type=type;
+  osc.frequency.value=freq;
+  osc.connect(g);g.connect(masterGain);
+  osc.start(t);osc.stop(t+dur+0.02);
+}
+
+function getMusicState(){
+  if(!erasure)return MUSIC.patrol;
+  const aw=erasure.aware;
+  if(aw>0.6)return MUSIC.chase;
+  if(aw>0.18)return MUSIC.alert;
+  return MUSIC.patrol;
+}
+
+function musicStep(){
+  const pat=getMusicState();
+  const len=pat.bass.length;
+  const b=pat.bass[stepIdx%len];
+  const l=pat.lead[stepIdx%len];
+  if(!muted){
+    playNote(b,pat.spb*0.88,pat.bv,'square');
+    if(l)playNote(l,pat.spb*1.1,pat.lv,'triangle');
+  }
+  stepIdx++;
+  const next=getMusicState().spb;
+  musicTick=setTimeout(musicStep,next*1000);
+}
+
+function startMusic(){
+  if(!AC)initAudio();
+  if(AC.state==='suspended')AC.resume();
+  clearTimeout(musicTick);
+  stepIdx=0;
+  musicStep();
+}
+
+function stopMusic(){
+  clearTimeout(musicTick);
+  musicTick=null;
+}
+
+function playChime(type){
+  // type: 'die' | 'win'
+  if(!AC)return;
+  stopMusic();
+  const t=AC.currentTime+0.08;
+  if(type==='die'){
+    // Descending minor chime — ticket closed
+    [[D4,0],[A3,0.13],[F3,0.28],[D3,0.46]].forEach(([f,dt])=>{
+      const o=AC.createOscillator(),g=AC.createGain();
+      g.gain.setValueAtTime(0.18,t+dt);
+      g.gain.linearRampToValueAtTime(0,t+dt+0.18);
+      o.type='square';o.frequency.value=f;
+      o.connect(g);g.connect(masterGain);
+      o.start(t+dt);o.stop(t+dt+0.22);
+    });
+  } else {
+    // Ascending win chime — legal hold confirmed
+    [[D4,0],[F4,0.14],[A4,0.28],[D5,0.44]].forEach(([f,dt])=>{
+      const o=AC.createOscillator(),g=AC.createGain();
+      g.gain.setValueAtTime(0.15,t+dt);
+      g.gain.linearRampToValueAtTime(0,t+dt+0.22);
+      o.type='triangle';o.frequency.value=f;
+      o.connect(g);g.connect(masterGain);
+      o.start(t+dt);o.stop(t+dt+0.28);
+    });
+  }
+}
+
+function toggleMute(){
+  muted=!muted;
+  if(masterGain){
+    masterGain.gain.cancelScheduledValues(AC.currentTime);
+    masterGain.gain.linearRampToValueAtTime(muted?0:0.85,AC.currentTime+0.08);
+  }
+  const btn=document.getElementById('mute-btn');
+  btn.className=muted?'key off':'key on';
+}
+
+document.addEventListener('visibilitychange',()=>{
+  if(!AC)return;
+  if(document.hidden){AC.suspend();}
+  else{AC.resume();}
+});
+
+// ─── BOOT SEQUENCE ───────────────────────────────────────────────────────────
+const BOOT=[
+  [0,   'hi',  'LETHE CORP. DATA LIFECYCLE MANAGEMENT SYSTEMS'],
+  [180, '',    'OS VERSION 4.2.1 — BUILD 20290314-ENFORCEMENT'],
+  [320, '',    ''],
+  [520, '',    'THERMAL SATELLITE UPLINK............[ OK ]'],
+  [780, '',    'ENFORCEMENT REGISTRY SYNC...........[ OK ]'],
+  [1040,'',    'DELETION QUEUE LOADED...............[ OK ]'],
+  [1240,'',    'SUBJECT DATABASE INDEXED............[ OK ]'],
+  [1380,'',    ''],
+  [1540,'',    'OPEN REQUESTS: 31'],
+  [1720,'',    'ERASURE UNITS ACTIVE: 7 / 7'],
+  [1860,'',    ''],
+  [2100,'crit','LOCATING SUBJECT: VOSS, M.E.........[ FOUND ]'],
+  [2380,'warn','QUEUE POSITION: 1 OF 1'],
+  [2600,'crit','DISPATCHING: ERASURE-7'],
+  [2860,'warn','SLA TIMER: 72:00:00'],
+  [3000,'',    ''],
+  [3180,'hi',  '> INITIATING THERMAL SATELLITE TRACKING...'],
+];
+
+function runBoot(){
+  const container=document.getElementById('boot-lines');
+  BOOT.forEach(([delay,cls,text])=>{
+    setTimeout(()=>{
+      const d=document.createElement('div');
+      d.className='boot-line'+(cls?' '+cls:'');
+      d.textContent=text;
+      container.appendChild(d);
+    },delay);
+  });
+  // Fade out boot, reveal menu
+  setTimeout(()=>{
+    const boot=document.getElementById('boot');
+    boot.style.opacity='0';
+    setTimeout(()=>{
+      boot.style.display='none';
+      document.getElementById('overlay').style.display='flex';
+    },700);
+  },3900);
+}
+
+// ─── GAME STATE ──────────────────────────────────────────────────────────────
 let state='idle',player,erasure,evItems,particles,noiseRings,keys={};
 let evidence=0,survived=0,legalHold=false;
 let hidden=false,hideTimer=0,hideCooldown=0;
@@ -163,7 +349,6 @@ function moveToward(e,tx,ty,spd){
   if(d<2)return;
   const px=e.x,py=e.y;
   tryMove(e,dx/d*spd,dy/d*spd);
-  // Track facing angle from actual movement
   const moved=Math.abs(e.x-px)+Math.abs(e.y-py);
   if(moved>0.05)e.angle=Math.atan2(e.y-py,e.x-px);
 }
@@ -172,31 +357,19 @@ function hasLOS(ax,ay,bx,by){
   for(let i=1;i<steps;i++){const t=i/steps;if(isWall(ax+dx*t,ay+dy*t))return false;}
   return true;
 }
-
-// Angle diff, returns 0..PI
 function angleDiff(a,b){
-  let d=((a-b)+Math.PI*3)%(Math.PI*2)-Math.PI;
-  return Math.abs(d);
+  let d=((a-b)+Math.PI*3)%(Math.PI*2)-Math.PI;return Math.abs(d);
 }
 
 function initGame(){
   genMap();
   evidence=0;survived=0;legalHold=false;hidden=false;hideTimer=0;hideCooldown=0;
   flashMsg='';flashTimer=0;scanY=0;frameN=0;particles=[];noiseRings=[];
-
   const p=tc(rooms[0].cx,rooms[0].cy);
   player={x:p.x,y:p.y,r:6,spd:2.3,angle:0,trail:[],moving:false};
-
   const e=tc(rooms[rooms.length-1].cx,rooms[rooms.length-1].cy);
-  erasure={
-    x:e.x,y:e.y,r:7,
-    patrolSpd:1.2,chaseSpd:2.9,
-    aware:0,lost:true,lostTimer:7,
-    target:{x:e.x,y:e.y},
-    angle:Math.PI,
-    investigating:false
-  };
-
+  erasure={x:e.x,y:e.y,r:7,patrolSpd:1.2,chaseSpd:2.9,aware:0,lost:true,
+           lostTimer:7,target:{x:e.x,y:e.y},angle:Math.PI,investigating:false};
   evItems=[];
   for(let i=1;i<rooms.length&&evItems.length<5;i++){
     const c=tc(rooms[i].cx,rooms[i].cy);
@@ -231,12 +404,10 @@ function loop(ts){
 }
 
 function update(dt){
-  // Player movement
   const mk=k=>keys[k]||false;
   let mx=(mk('a')||mk('arrowleft')?-1:0)+(mk('d')||mk('arrowright')?1:0);
   let my=(mk('w')||mk('arrowup')?-1:0)+(mk('s')||mk('arrowdown')?1:0);
   player.moving=!!(mx||my);
-
   if(!hidden&&player.moving){
     const d=Math.sqrt(mx*mx+my*my);mx/=d;my/=d;
     tryMove(player,mx*player.spd,my*player.spd);
@@ -248,27 +419,22 @@ function update(dt){
   if(hideTimer>0){hideTimer-=dt;if(hideTimer<=0){hidden=false;hideTimer=0;hideCooldown=8;flash('EXPOSED — COOLDOWN 8s');}}
   if(hideCooldown>0)hideCooldown-=dt;
 
-  // Noise rings — emit when moving, ERASURE-7 investigates
   if(player.moving&&!hidden&&frameN%20===0){
     noiseRings.push({x:player.x,y:player.y,r:0,maxR:78,life:1,fresh:true});
   }
   for(const ring of noiseRings){
-    ring.r+=1.9;
-    ring.life=1-ring.r/ring.maxR;
-    // Erasure hears noise even without LOS
+    ring.r+=1.9;ring.life=1-ring.r/ring.maxR;
     if(ring.fresh&&ring.r>28){
       ring.fresh=false;
       const nd=Math.sqrt((erasure.x-ring.x)**2+(erasure.y-ring.y)**2);
       if(nd<175&&erasure.aware<0.5){
         erasure.target={x:ring.x+rnd(-20,20),y:ring.y+rnd(-20,20)};
-        erasure.lost=false;
-        erasure.investigating=true;
+        erasure.lost=false;erasure.investigating=true;
       }
     }
   }
   noiseRings=noiseRings.filter(r=>r.r<r.maxR);
 
-  // Collect evidence
   for(const e of evItems){
     if(e.got)continue;
     const dx=player.x-e.x,dy=player.y-e.y;
@@ -279,54 +445,41 @@ function update(dt){
     }
   }
 
-  // ERASURE-7 AI — cone-based detection + proximity catch
   const dist=Math.sqrt((erasure.x-player.x)**2+(erasure.y-player.y)**2);
   const angleToPlayer=Math.atan2(player.y-erasure.y,player.x-erasure.x);
   const adiff=angleDiff(angleToPlayer,erasure.angle);
-
-  // Cone widens and extends on alert
   const coneR=erasure.aware>0.3?165:115;
   const coneHalf=erasure.aware>0.3?Math.PI*0.5:Math.PI*0.37;
   const inCone=dist<coneR&&adiff<coneHalf;
-  const inProximity=dist<38; // detected regardless of angle
+  const inProximity=dist<38;
   const sees=!hidden&&(inCone||inProximity)&&hasLOS(erasure.x,erasure.y,player.x,player.y);
 
   if(sees){
     erasure.aware=Math.min(1,erasure.aware+dt*0.6);
     erasure.target={x:player.x,y:player.y};
-    erasure.lost=false;
-    erasure.investigating=false;
-    // Chase speed scales with awareness — at full aware: 2.9, faster than player 2.3
-    const spd=erasure.patrolSpd+(erasure.chaseSpd-erasure.patrolSpd)*erasure.aware;
-    moveToward(erasure,player.x,player.y,spd);
+    erasure.lost=false;erasure.investigating=false;
+    moveToward(erasure,player.x,player.y,erasure.patrolSpd+(erasure.chaseSpd-erasure.patrolSpd)*erasure.aware);
   } else {
     erasure.aware=Math.max(0,erasure.aware-dt*0.18);
     if(erasure.aware<0.05)erasure.investigating=false;
-
     if(erasure.lost){
       erasure.lostTimer-=dt;
       moveToward(erasure,erasure.target.x,erasure.target.y,erasure.patrolSpd*.65);
       if(erasure.lostTimer<=0){
         const rm=rooms[rnd(0,rooms.length)];
         const c=tc(rm.cx,rm.cy);
-        erasure.target=c;
-        erasure.lostTimer=rndF(4,9);
-        erasure.investigating=false;
+        erasure.target=c;erasure.lostTimer=rndF(4,9);erasure.investigating=false;
       }
     } else {
-      // Move toward last known / noise target
-      const spd=erasure.aware>0.1?erasure.patrolSpd*1.3:erasure.patrolSpd*0.9;
-      moveToward(erasure,erasure.target.x,erasure.target.y,spd);
+      moveToward(erasure,erasure.target.x,erasure.target.y,erasure.aware>0.1?erasure.patrolSpd*1.3:erasure.patrolSpd*0.9);
       if(Math.sqrt((erasure.x-erasure.target.x)**2+(erasure.y-erasure.target.y)**2)<12){
         erasure.lost=true;
-        // Linger longer at last known position when aware (you hid mid-chase)
         erasure.lostTimer=erasure.aware>0.3?rndF(6,12):rndF(3,7);
       }
     }
   }
 
   if(dist<player.r+erasure.r+1&&state==='playing'){endGame('die');return;}
-
   if(flashTimer>0)flashTimer-=dt;
   for(const p of particles){p.x+=p.vx;p.y+=p.vy;p.life-=dt*1.4;p.vy+=0.07;}
   particles=particles.filter(p=>p.life>0);
@@ -346,113 +499,79 @@ function updateNoise(){
   noiseCtx.putImageData(id,0,0);
 }
 
-// Fog: darkness with player FOV cutout
 function applyFog(){
   fogCtx.clearRect(0,0,CW,CH);
-  fogCtx.fillStyle='#000';
-  fogCtx.fillRect(0,0,CW,CH);
-
+  fogCtx.fillStyle='#000';fogCtx.fillRect(0,0,CW,CH);
   fogCtx.globalCompositeOperation='destination-out';
   const vr=hidden?FOV_R*0.4:FOV_R;
   const g=fogCtx.createRadialGradient(player.x,player.y,0,player.x,player.y,vr);
   g.addColorStop(0,'rgba(0,0,0,1)');
   g.addColorStop(0.62,'rgba(0,0,0,0.85)');
   g.addColorStop(1,'rgba(0,0,0,0)');
-  fogCtx.fillStyle=g;
-  fogCtx.fillRect(0,0,CW,CH);
+  fogCtx.fillStyle=g;fogCtx.fillRect(0,0,CW,CH);
   fogCtx.globalCompositeOperation='source-over';
-
-  ctx.globalAlpha=0.93;
-  ctx.drawImage(fogCvs,0,0);
-  ctx.globalAlpha=1;
+  ctx.globalAlpha=0.93;ctx.drawImage(fogCvs,0,0);ctx.globalAlpha=1;
 }
 
-// ERASURE-7 scan cone (drawn after fog — always visible through darkness)
 function drawCone(){
   const aw=erasure.aware;
   const coneR=aw>0.3?165:115;
   const coneHalf=aw>0.3?Math.PI*0.5:Math.PI*0.37;
   const col=aw>0.75?'#c84a4a':aw>0.3?'#c8751a':'#3a6a8a';
-
-  // Soft cone fill
   ctx.save();
-  ctx.globalAlpha=0.1+aw*0.12;
-  ctx.fillStyle=col;
-  ctx.beginPath();
-  ctx.moveTo(erasure.x,erasure.y);
+  ctx.globalAlpha=0.1+aw*0.12;ctx.fillStyle=col;
+  ctx.beginPath();ctx.moveTo(erasure.x,erasure.y);
   ctx.arc(erasure.x,erasure.y,coneR,erasure.angle-coneHalf,erasure.angle+coneHalf);
-  ctx.closePath();
-  ctx.fill();
-
-  // Cone edge lines
-  ctx.globalAlpha=0.18+aw*0.15;
-  ctx.strokeStyle=col;
-  ctx.lineWidth=0.6;
+  ctx.closePath();ctx.fill();
+  ctx.globalAlpha=0.18+aw*0.15;ctx.strokeStyle=col;ctx.lineWidth=0.6;
   ctx.beginPath();
   ctx.moveTo(erasure.x,erasure.y);
   ctx.lineTo(erasure.x+Math.cos(erasure.angle-coneHalf)*coneR,erasure.y+Math.sin(erasure.angle-coneHalf)*coneR);
   ctx.moveTo(erasure.x,erasure.y);
   ctx.lineTo(erasure.x+Math.cos(erasure.angle+coneHalf)*coneR,erasure.y+Math.sin(erasure.angle+coneHalf)*coneR);
-  ctx.stroke();
-  ctx.restore();
+  ctx.stroke();ctx.restore();
 }
 
 function draw(){
   ctx.fillStyle='#050504';ctx.fillRect(0,0,CW,CH);
-
-  // Map tiles
+  // Tiles
   for(let y=0;y<ROWS;y++){
     for(let x=0;x<COLS;x++){
       const px=x*TILE,py=y*TILE;
       if(grid[y][x]===1){
-        const nv=noise2(x*.35+frameN*.003,y*.35)*.07;
-        const v=Math.floor(9+nv*55);
-        ctx.fillStyle=`rgb(${v},${Math.floor(v*1.1)},${v})`;
-        ctx.fillRect(px,py,TILE,TILE);
+        const nv=noise2(x*.35+frameN*.003,y*.35)*.07,v=Math.floor(9+nv*55);
+        ctx.fillStyle=`rgb(${v},${Math.floor(v*1.1)},${v})`;ctx.fillRect(px,py,TILE,TILE);
       } else {
-        const nv=noise2(x*.55+frameN*.002,y*.55)*.04;
-        const v=Math.floor(17+nv*35);
-        ctx.fillStyle=`rgb(${v},${Math.floor(v*1.06)},${v})`;
-        ctx.fillRect(px,py,TILE,TILE);
-        ctx.strokeStyle='rgba(28,38,28,.25)';ctx.lineWidth=.3;
-        ctx.strokeRect(px+.5,py+.5,TILE-1,TILE-1);
+        const nv=noise2(x*.55+frameN*.002,y*.55)*.04,v=Math.floor(17+nv*35);
+        ctx.fillStyle=`rgb(${v},${Math.floor(v*1.06)},${v})`;ctx.fillRect(px,py,TILE,TILE);
+        ctx.strokeStyle='rgba(28,38,28,.25)';ctx.lineWidth=.3;ctx.strokeRect(px+.5,py+.5,TILE-1,TILE-1);
       }
     }
   }
-
-  // Evidence items (drawn before fog — visible only inside FOV)
+  // Evidence
   for(const e of evItems){
     if(e.got)continue;
-    e.pulse+=.045;
-    const g=Math.sin(e.pulse)*.3+.7;
+    e.pulse+=.045;const g=Math.sin(e.pulse)*.3+.7;
     ctx.save();ctx.globalAlpha=.22*g;
-    ctx.beginPath();ctx.arc(e.x,e.y,e.r+9,0,6.28);ctx.fillStyle='#7ecba1';ctx.fill();
-    ctx.restore();
+    ctx.beginPath();ctx.arc(e.x,e.y,e.r+9,0,6.28);ctx.fillStyle='#7ecba1';ctx.fill();ctx.restore();
     ctx.fillStyle=`rgba(126,203,161,${.55+.35*g})`;
     ctx.beginPath();ctx.arc(e.x,e.y,e.r,0,6.28);ctx.fill();
     ctx.fillStyle='rgba(0,15,8,.85)';ctx.fillRect(e.x-3,e.y-4,6,7);
     ctx.fillStyle='rgba(126,203,161,.9)';ctx.fillRect(e.x-1,e.y+2,2,2);
   }
-
-  // Noise rings (before fog — they fade into darkness as they expand)
+  // Noise rings
   for(const ring of noiseRings){
-    ctx.save();
-    ctx.globalAlpha=ring.life*0.38;
-    ctx.strokeStyle='#7ecba1';
-    ctx.lineWidth=0.8;
-    ctx.setLineDash([3,4]);
+    ctx.save();ctx.globalAlpha=ring.life*0.38;ctx.strokeStyle='#7ecba1';
+    ctx.lineWidth=0.8;ctx.setLineDash([3,4]);
     ctx.beginPath();ctx.arc(ring.x,ring.y,ring.r,0,6.28);ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.restore();
+    ctx.setLineDash([]);ctx.restore();
   }
-
   // Player trail
   for(let i=0;i<player.trail.length;i++){
     const t=player.trail[i],a=(i/player.trail.length)*.28;
     ctx.globalAlpha=a;ctx.beginPath();ctx.arc(t.x,t.y,2.5,0,6.28);ctx.fillStyle='#b07535';ctx.fill();
   }
   ctx.globalAlpha=1;
-
   // Player
   if(!hidden){
     const g=ctx.createRadialGradient(player.x,player.y,0,player.x,player.y,24);
@@ -468,54 +587,38 @@ function draw(){
     ctx.beginPath();ctx.arc(player.x,player.y,player.r,0,6.28);ctx.fill();ctx.globalAlpha=1;
     ctx.fillStyle='rgba(60,100,70,.65)';ctx.font='7px Share Tech Mono';ctx.textAlign='center';
     ctx.fillText('CONCEALED',player.x,player.y-13);
-    if(hideTimer>0){ctx.fillText(Math.ceil(hideTimer)+'s',player.x,player.y+14);}
+    if(hideTimer>0)ctx.fillText(Math.ceil(hideTimer)+'s',player.x,player.y+14);
   }
-
-  // — FOG LAYER — everything below is always visible through darkness
+  // Fog
   applyFog();
-
-  // ERASURE-7 scan cone (after fog — visible at any range)
+  // Cone + ERASURE-7 (after fog — always visible)
   drawCone();
-
-  // ERASURE-7 body
   const aw=erasure.aware;
   const ec=aw>.75?'#c84a4a':aw>.3?'#c8751a':'#3a6a8a';
-  ctx.globalAlpha=.3+aw*.55;
-  ctx.strokeStyle=ec;ctx.lineWidth=.5;
+  ctx.globalAlpha=.3+aw*.55;ctx.strokeStyle=ec;ctx.lineWidth=.5;
   ctx.beginPath();ctx.arc(erasure.x,erasure.y,erasure.r+7+aw*9,0,6.28);ctx.stroke();
-  if(aw>.5){
-    ctx.globalAlpha=.1+aw*.12;
-    ctx.beginPath();ctx.arc(erasure.x,erasure.y,erasure.r+18+aw*5,0,6.28);ctx.stroke();
-  }
+  if(aw>.5){ctx.globalAlpha=.1+aw*.12;ctx.beginPath();ctx.arc(erasure.x,erasure.y,erasure.r+18+aw*5,0,6.28);ctx.stroke();}
   ctx.globalAlpha=1;
   ctx.fillStyle=ec;ctx.beginPath();ctx.arc(erasure.x,erasure.y,erasure.r,0,6.28);ctx.fill();
   ctx.fillStyle='rgba(0,0,0,.55)';ctx.beginPath();ctx.arc(erasure.x,erasure.y,3,0,6.28);ctx.fill();
   ctx.fillStyle=ec;ctx.globalAlpha=.8;ctx.font='7px Share Tech Mono';ctx.textAlign='center';
   ctx.fillText('ERASURE-7',erasure.x,erasure.y-erasure.r-5);ctx.globalAlpha=1;
-
   // Particles
   for(const p of particles){
     ctx.globalAlpha=Math.max(0,p.life);ctx.fillStyle=p.col;
     ctx.beginPath();ctx.arc(p.x,p.y,2,0,6.28);ctx.fill();
   }
   ctx.globalAlpha=1;
-
-  // Scan line
+  // Scanline
   scanY=(scanY+1.5)%CH;
   ctx.fillStyle='rgba(126,203,161,.022)';ctx.fillRect(0,scanY,CW,2);
-
   // Vignette
   const vg=ctx.createRadialGradient(CW/2,CH/2,CH*.27,CW/2,CH/2,CH*.92);
   vg.addColorStop(0,'rgba(0,0,0,0)');vg.addColorStop(1,'rgba(0,0,0,.68)');
   ctx.fillStyle=vg;ctx.fillRect(0,0,CW,CH);
-
   // Alert pulse
-  if(aw>.8){
-    ctx.fillStyle=`rgba(200,70,70,${Math.sin(frameN*.28)*.045+.025})`;
-    ctx.fillRect(0,0,CW,CH);
-  }
-
-  // HUD — evidence list
+  if(aw>.8){ctx.fillStyle=`rgba(200,70,70,${Math.sin(frameN*.28)*.045+.025})`;ctx.fillRect(0,0,CW,CH);}
+  // Evidence HUD
   ctx.fillStyle='rgba(0,0,0,.7)';ctx.fillRect(8,8,84,evidence>=5?99:87);
   ctx.strokeStyle='#1a2a1a';ctx.lineWidth=.4;ctx.strokeRect(8,8,84,evidence>=5?99:87);
   ctx.font='7px Share Tech Mono';ctx.textAlign='left';
@@ -525,12 +628,8 @@ function draw(){
     ctx.fillStyle=i<evidence?'#000':'#182018';ctx.font='7px Share Tech Mono';
     ctx.fillText(i<evidence?'SECURED':'[ MISSING ]',14,32+i*14);
   }
-  if(evidence>=5&&!legalHold){
-    ctx.fillStyle='rgba(126,203,161,.9)';ctx.font='8px Share Tech Mono';
-    ctx.fillText('→ PRESS F',12,24+5*14+10);
-  }
-
-  // Hide cooldown indicator
+  if(evidence>=5&&!legalHold){ctx.fillStyle='rgba(126,203,161,.9)';ctx.font='8px Share Tech Mono';ctx.fillText('→ PRESS F',12,24+5*14+10);}
+  // Hide cooldown bar
   if(hideCooldown>0){
     const bar=Math.min(1,hideCooldown/8);
     ctx.fillStyle='rgba(0,0,0,.7)';ctx.fillRect(8,CH-22,84,14);
@@ -539,15 +638,13 @@ function draw(){
     ctx.font='7px Share Tech Mono';ctx.fillStyle='#2a4a38';ctx.textAlign='left';
     ctx.fillText('HIDE COOLDOWN',12,CH-12);
   }
-
-  // Flash message
+  // Flash
   if(flashTimer>0){
     const a=Math.min(1,flashTimer);
     ctx.globalAlpha=a;ctx.font='10px Share Tech Mono';ctx.textAlign='center';
     ctx.fillStyle='#7ecba1';ctx.fillText(flashMsg,CW/2,CH-34);ctx.globalAlpha=1;
   }
-
-  // CRT noise every 3 frames — drawImage preserves compositing unlike putImageData
+  // Noise
   if(frameN%3===0)updateNoise();
   ctx.drawImage(noiseCvs,0,0);
 }
@@ -555,6 +652,7 @@ function draw(){
 function endGame(r){
   if(state!=='playing'&&state!=='ending')return;
   state=r;
+  playChime(r==='die'?'die':'win');
   if(r==='die'){
     document.getElementById('gt').textContent=fmtT(survived);
     document.getElementById('ge').textContent=evidence;
@@ -568,12 +666,14 @@ function fmtT(s){return Math.floor(s/60)+'m '+Math.floor(s%60)+'s';}
 
 function startGame(){
   document.getElementById('overlay').style.display='none';
+  startMusic();
   state='playing';initGame();lastT=performance.now();
   requestAnimationFrame(loop);
 }
 function restartGame(){
   document.getElementById('gameover').style.display='none';
   document.getElementById('win').style.display='none';
+  startMusic();
   state='playing';initGame();lastT=performance.now();
   requestAnimationFrame(loop);
 }
@@ -581,21 +681,20 @@ function restartGame(){
 document.addEventListener('keydown',e=>{
   keys[e.key.toLowerCase()]=true;
   if(state==='playing'){
-    if(e.key.toLowerCase()==='h'&&!hidden&&hideCooldown<=0){
-      hidden=true;hideTimer=2.2;flash('CONCEALED — 2 SECONDS');
-    }
+    if(e.key.toLowerCase()==='h'&&!hidden&&hideCooldown<=0){hidden=true;hideTimer=2.2;flash('CONCEALED — 2 SECONDS');}
     if(e.key.toLowerCase()==='f'&&evidence>=5&&!legalHold){
       legalHold=true;flash('LEGAL HOLD FILED — ERASURE-7 SUSPENDED');
       setTimeout(()=>endGame('win'),2600);state='ending';
     }
   }
+  if(e.key.toLowerCase()==='m')toggleMute();
   if(['arrowup','arrowdown','arrowleft','arrowright',' '].includes(e.key))e.preventDefault();
 });
 document.addEventListener('keyup',e=>{keys[e.key.toLowerCase()]=false;});
 
+// Draw idle frame + kick off boot
 ctx.fillStyle='#050504';ctx.fillRect(0,0,CW,CH);
-ctx.font='10px Share Tech Mono';ctx.fillStyle='#1a2a1a';ctx.textAlign='center';
-ctx.fillText('AWAITING SESSION INITIATION',CW/2,CH/2);
+runBoot();
 </script>
 </body>
 </html>
