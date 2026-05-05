@@ -221,10 +221,12 @@ function pad(n){return String(n).padStart(2,'0');}
 
 let lastT=0;
 function loop(ts){
-  if(state!=='playing')return;
+  if(state!=='playing'&&state!=='ending')return;
   const dt=Math.min((ts-lastT)/1000,0.05);lastT=ts;
-  survived+=dt;frameN++;
-  update(dt);draw();upHUD();
+  if(state==='playing'){survived+=dt;}
+  frameN++;
+  if(state==='playing')update(dt);
+  draw();upHUD();
   requestAnimationFrame(loop);
 }
 
