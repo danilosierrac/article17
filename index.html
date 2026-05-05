@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>ARTICLE 17 — Lethe Corp. Enforcement</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap');
+*{box-sizing:border-box;margin:0;padding:0;}
+html,body{background:#000;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;min-height:100vh;font-family:'Share Tech Mono',monospace;padding:1rem 0;}
+#wrap{position:relative;width:640px;}
+#hud-top{display:flex;justify-content:space-between;align-items:center;padding:6px 10px;background:#000;border:1px solid #1a1a1a;}
+.hi{text-align:center;}
+.hl{font-size:9px;color:#2a2a2a;letter-spacing:.12em;text-transform:uppercase;}
+.hv{font-size:11px;color:#7ecba1;letter-spacing:.08em;margin-top:1px;}
+.hv.w{color:#c8751a;}.hv.d{color:#c84a4a;}
+#canvas-wrap{position:relative;border:1px solid #1a1a1a;border-top:none;overflow:hidden;background:#050504;}
+canvas{display:block;}
+#hud-bot{display:flex;justify-content:space-between;align-items:center;padding:5px 10px;background:#000;border:1px solid #1a1a1a;border-top:none;}
+.ctl{display:flex;gap:4px;align-items:center;}
+.key{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border:1px solid #2a2a2a;font-size:9px;color:#444;}
+.cl{font-size:9px;color:#2a2a2a;margin:0 3px;}
+#overlay,#gameover,#win{position:absolute;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.9);display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;z-index:10;padding:2rem;}
+#gameover,#win{display:none;}
+.ot{font-size:26px;letter-spacing:.15em;margin-bottom:5px;}
+.og{color:#7ecba1;}.or{color:#c84a4a;}
+.os{font-size:9px;color:#2a2a2a;letter-spacing:.18em;margin-bottom:1.5rem;}
+.ob{font-size:11px;color:#7ecba1;line-height:1.9;margin-bottom:1.5rem;max-width:380px;}
+.ob .r{color:#c84a4a;}
+.ostat{font-size:10px;color:#333;line-height:2.3;margin-bottom:1.5rem;}
+.ostat span{color:#7ecba1;}
+.btn{background:transparent;padding:9px 24px;font-family:'Share Tech Mono',monospace;font-size:11px;letter-spacing:.12em;cursor:pointer;}
+.bg{border:1px solid #7ecba1;color:#7ecba1;}.bg:hover{background:#7ecba1;color:#000;}
+.br{border:1px solid #c84a4a;color:#c84a4a;}.br:hover{background:#c84a4a;color:#000;}
+.ticker-wrap{overflow:hidden;height:14px;background:#000;border:1px solid #1a1a1a;border-top:none;}
+.ticker{white-space:nowrap;font-size:8px;color:#191919;letter-spacing:.1em;line-height:14px;display:inline-block;animation:tick 40s linear infinite;}
+@keyframes tick{from{transform:translateX(0)}to{transform:translateX(-50%)}}
+</style>
+</head>
+<body>
+<div id="wrap">
+<div id="hud-top">
+  <div class="hi"><div class="hl">Subject</div><div class="hv">VOSS, M.E.</div></div>
+  <div class="hi"><div class="hl">Request ID</div><div class="hv">EU-2029-AR17-004822</div></div>
+  <div class="hi"><div class="hl">ERASURE-7</div><div class="hv d" id="hs">TRACKING</div></div>
+  <div class="hi"><div class="hl">Deadline</div><div class="hv w" id="ht">72:00:00</div></div>
+  <div class="hi"><div class="hl">Evidence</div><div class="hv" id="he">0 / 5</div></div>
+</div>
+<div id="canvas-wrap">
+  <canvas id="c" width="640" height="480"></canvas>
+  <div id="overlay">
+    <div class="ot og">ARTICLE 17</div>
+    <div class="os">LETHE CORP · THERMAL SATELLITE · ENFORCEMENT DIVISION</div>
+    <div class="ob">You submitted a GDPR deletion request to Lethe Corp.<br><span class="r">ERASURE-7 has been dispatched to your location.</span><br><br>
+    Collect <span class="r">5 evidence files</span> scattered through the city block.<br>
+    Press <span class="r">F</span> to file a legal hold — it freezes the queue.<br>
+    ERASURE cannot process a contested record.<br><br>
+    Press <span class="r">H</span> to hide (3 sec cooldown). Stay out of sight.</div>
+    <button class="btn bg" onclick="startGame()">INITIATE SESSION</button>
+  </div>
+  <div id="gameover">
+    <div class="ot or">REQUEST RESOLVED</div>
+    <div class="os">RECORD STATUS: CLOSED · ERASURE-7 RETURNING TO BASE</div>
+    <div class="ostat">Survival time: <span id="gt">—</span><br>Evidence collected: <span id="ge">—</span> / 5<br>Legal hold filed: <span id="gh">NO</span></div>
+    <button class="btn br" onclick="restartGame()">REINSTATE RECORD</button>
+  </div>
+  <div id="win">
+    <div class="ot og">LEGAL HOLD ACTIVE</div>
+    <div class="os">ERASURE-7 SUSPENDED · QUEUE FROZEN · RECORD PROTECTED</div>
+    <div class="ob">You filed in time.<br>ERASURE-7 checked your record.<br>Saw: <span class="r">SUSPENDED — LEGAL HOLD.</span><br>Turned. Walked away.<br><br>It has other records to process.</div>
+    <button class="btn bg" onclick="restartGame()">PLAY AGAIN</button>
+  </div>
+</div>
+<div id="hud-bot">
+  <div class="ctl"><span class="cl">MOVE</span><div class="key">W</div><div class="key">A</div><div class="key">S</div><div class="key">D</div><span class="cl" style="margin-left:6px;">or arrows</span></div>
+  <div style="font-size:9px;color:#1a1a1a;letter-spacing:.1em;">LETHE CORP · SATELLITE UPLINK ACTIVE</div>
+  <div class="ctl"><span class="cl">HIDE</span><div class="key">H</div><span class="cl" style="margin-left:6px;">FILE</span><div class="key">F</div></div>
+</div>
+<div class="ticker-wrap">
+  <span class="ticker">LETHE CORP SATELLITE UPLINK ACTIVE &nbsp;·&nbsp; THERMAL IMAGING ACTIVE &nbsp;·&nbsp; 31 EU REGIONS COVERED &nbsp;·&nbsp; DELETION COMPLIANCE 100% &nbsp;·&nbsp; OPEN REQUESTS: 31 &nbsp;·&nbsp; ERASURE UNITS DEPLOYED: 7 &nbsp;·&nbsp; GDPR/ART17/ENFORCEMENT &nbsp;·&nbsp; LEGAL &nbsp;·&nbsp; COMPLIANT &nbsp;·&nbsp; PERMANENT &nbsp;·&nbsp; YOUR DATA, HANDLED WITH CARE &nbsp;·&nbsp; &nbsp;&nbsp;&nbsp;&nbsp; LETHE CORP SATELLITE UPLINK ACTIVE &nbsp;·&nbsp; THERMAL IMAGING ACTIVE &nbsp;·&nbsp; 31 EU REGIONS COVERED &nbsp;·&nbsp; DELETION COMPLIANCE 100% &nbsp;·&nbsp; OPEN REQUESTS: 31 &nbsp;·&nbsp; ERASURE UNITS DEPLOYED: 7 &nbsp;·&nbsp; GDPR/ART17/ENFORCEMENT &nbsp;·&nbsp; LEGAL &nbsp;·&nbsp; COMPLIANT &nbsp;·&nbsp; PERMANENT &nbsp;·&nbsp; YOUR DATA, HANDLED WITH CARE &nbsp;·&nbsp;</span>
+</div>
+</div>
+
+<script>
+const canvas=document.getElementById('c');
+const ctx=canvas.getContext('2d');
+const CW=640,CH=480,TILE=32,COLS=20,ROWS=15;
+
+let state='idle',player,erasure,evItems,particles,keys={};
+let evidence=0,survived=0,legalHold=false;
+let hidden=false,hideTimer=0,hideCooldown=0;
+let flashMsg='',flashTimer=0,scanY=0,frameN=0;
+let grid=[],rooms=[],noiseCache=null,noiseCacheFrame=-1;
+
+function rnd(a,b){return Math.floor(Math.random()*(b-a))+a;}
+function rndF(a,b){return Math.random()*(b-a)+a;}
+
+// Value noise
+const NT=new Float32Array(512);for(let i=0;i<512;i++)NT[i]=Math.random();
+function noise2(x,y){
+  const xi=Math.floor(x)&255,yi=Math.floor(y)&255;
+  const xf=x-Math.floor(x),yf=y-Math.floor(y);
+  const u=xf*xf*(3-2*xf),v=yf*yf*(3-2*yf);
+  return NT[(xi+NT[yi&255])&511]*(1-u)*(1-v)+
+         NT[(xi+1+NT[yi&255])&511]*u*(1-v)+
+         NT[(xi+NT[(yi+1)&255])&511]*(1-u)*v+
+         NT[(xi+1+NT[(yi+1)&255])&511]*u*v;
+}
+
+function genMap(){
+  grid=[];rooms=[];
+  for(let y=0;y<ROWS;y++){grid[y]=[];for(let x=0;x<COLS;x++)grid[y][x]=1;}
+  const rs=[
+    {x:1,y:1,w:7,h:5},{x:10,y:1,w:8,h:5},
+    {x:1,y:8,w:6,h:5},{x:11,y:8,w:7,h:5},
+    {x:5,y:4,w:4,h:5},{x:13,y:5,w:4,h:4}
+  ];
+  for(const r of rs){
+    for(let y=r.y;y<r.y+r.h&&y<ROWS-1;y++)
+      for(let x=r.x;x<r.x+r.w&&x<COLS-1;x++)grid[y][x]=0;
+    rooms.push({cx:Math.floor(r.x+r.w/2),cy:Math.floor(r.y+r.h/2)});
+  }
+  function carve(ax,ay,bx,by){
+    let x=ax,y=ay;
+    while(x!==bx){x+=x<bx?1:-1;if(y>=0&&y<ROWS&&x>=0&&x<COLS)grid[y][x]=0;}
+    while(y!==by){y+=y<by?1:-1;if(y>=0&&y<ROWS&&x>=0&&x<COLS)grid[y][x]=0;}
+  }
+  carve(4,3,14,3);carve(4,10,14,10);
+  carve(4,3,4,10);carve(14,3,14,10);
+  carve(7,3,7,8);carve(13,3,13,8);
+  carve(1,5,5,5);carve(14,7,18,7);
+  for(let x=0;x<COLS;x++){grid[0][x]=1;grid[ROWS-1][x]=1;}
+  for(let y=0;y<ROWS;y++){grid[y][0]=1;grid[y][COLS-1]=1;}
+}
+
+function tc(tx,ty){return{x:tx*TILE+TILE/2,y:ty*TILE+TILE/2};}
+function isWall(px,py){
+  const tx=Math.floor(px/TILE),ty=Math.floor(py/TILE);
+  if(tx<0||ty<0||tx>=COLS||ty>=ROWS)return true;
+  return grid[ty][tx]===1;
+}
+function blocked(px,py,r){
+  const m=r-0.5;
+  return isWall(px-m,py-m)||isWall(px+m,py-m)||isWall(px-m,py+m)||isWall(px+m,py+m);
+}
+function tryMove(e,dx,dy){
+  const nx=e.x+dx,ny=e.y+dy;
+  if(!blocked(nx,ny,e.r)){e.x=nx;e.y=ny;return;}
+  if(!blocked(nx,e.y,e.r)){e.x=nx;return;}
+  if(!blocked(e.x,ny,e.r)){e.y=ny;}
+}
+function moveToward(e,tx,ty,spd){
+  const dx=tx-e.x,dy=ty-e.y,d=Math.sqrt(dx*dx+dy*dy);
+  if(d<2)return;
+  tryMove(e,dx/d*spd,dy/d*spd);
+}
+function hasLOS(ax,ay,bx,by){
+  const dx=bx-ax,dy=by-ay,steps=Math.ceil(Math.sqrt(dx*dx+dy*dy)/6);
+  for(let i=1;i<steps;i++){const t=i/steps;if(isWall(ax+dx*t,ay+dy*t))return false;}
+  return true;
+}
+
+function initGame(){
+  genMap();
+  evidence=0;survived=0;legalHold=false;hidden=false;hideTimer=0;hideCooldown=0;
+  flashMsg='';flashTimer=0;scanY=0;frameN=0;particles=[];
+
+  const p=tc(rooms[0].cx,rooms[0].cy);
+  player={x:p.x,y:p.y,r:6,spd:2.3,angle:0,trail:[]};
+
+  const e=tc(rooms[rooms.length-1].cx,rooms[rooms.length-1].cy);
+  erasure={x:e.x,y:e.y,r:7,spd:0.88,aware:0,lost:true,lostTimer:7,target:{x:e.x,y:e.y}};
+
+  evItems=[];
+  for(let i=1;i<rooms.length&&evItems.length<5;i++){
+    const c=tc(rooms[i].cx,rooms[i].cy);
+    evItems.push({x:c.x+rnd(-8,8),y:c.y+rnd(-8,8),r:5,got:false,pulse:rndF(0,6.28)});
+  }
+  upHUD();
+}
+
+function upHUD(){
+  document.getElementById('he').textContent=evidence+' / 5';
+  const t=Math.max(0,72*3600-Math.floor(survived));
+  const h=Math.floor(t/3600),m=Math.floor((t%3600)/60),s=t%60;
+  document.getElementById('ht').textContent=pad(h)+':'+pad(m)+':'+pad(s);
+  const el=document.getElementById('hs');
+  if(erasure.aware>.75){el.textContent='LOCKED ON';el.className='hv d';}
+  else if(erasure.lost){el.textContent='SEARCHING';el.className='hv w';}
+  else{el.textContent='TRACKING';el.className='hv w';}
+}
+function pad(n){return String(n).padStart(2,'0');}
+
+let lastT=0;
+function loop(ts){
+  if(state!=='playing')return;
+  const dt=Math.min((ts-lastT)/1000,0.05);lastT=ts;
+  survived+=dt;frameN++;
+  update(dt);draw();upHUD();
+  requestAnimationFrame(loop);
+}
+
+function update(dt){
+  // Player movement
+  if(!hidden){
+    let mx=(keys['a']||keys['arrowleft']?-1:0)+(keys['d']||keys['arrowright']?1:0);
+    let my=(keys['w']||keys['arrowup']?-1:0)+(keys['s']||keys['arrowdown']?1:0);
+    if(mx||my){
+      const d=Math.sqrt(mx*mx+my*my);mx/=d;my/=d;
+      tryMove(player,mx*player.spd,my*player.spd);
+      player.angle=Math.atan2(my,mx);
+    }
+  }
+  player.trail.push({x:player.x,y:player.y});
+  if(player.trail.length>16)player.trail.shift();
+
+  if(hideTimer>0){hideTimer-=dt;if(hideTimer<=0){hidden=false;hideTimer=0;hideCooldown=4;flash('EXPOSED — COOLDOWN 4s');}}
+  if(hideCooldown>0)hideCooldown-=dt;
+
+  // Collect evidence
+  for(const e of evItems){
+    if(e.got)continue;
+    const dx=player.x-e.x,dy=player.y-e.y;
+    if(Math.sqrt(dx*dx+dy*dy)<player.r+e.r+5){
+      e.got=true;evidence++;
+      flash(evidence>=5?'ALL EVIDENCE SECURED — PRESS F TO FILE LEGAL HOLD':'EVIDENCE SECURED — '+evidence+' / 5');
+      spawnP(e.x,e.y,'#7ecba1');upHUD();
+    }
+  }
+
+  // Erasure AI
+  const dist=Math.sqrt((erasure.x-player.x)**2+(erasure.y-player.y)**2);
+  const sees=!hidden&&dist<230&&hasLOS(erasure.x,erasure.y,player.x,player.y);
+  if(sees){
+    erasure.aware=Math.min(1,erasure.aware+dt*0.55);
+    erasure.target={x:player.x,y:player.y};
+    erasure.lost=false;
+    moveToward(erasure,player.x,player.y,erasure.spd+erasure.aware*1.1);
+  } else {
+    erasure.aware=Math.max(0,erasure.aware-dt*0.22);
+    if(erasure.lost){
+      erasure.lostTimer-=dt;
+      moveToward(erasure,erasure.target.x,erasure.target.y,erasure.spd*.6);
+      if(erasure.lostTimer<=0){
+        const rm=rooms[rnd(0,rooms.length)];
+        const c=tc(rm.cx,rm.cy);
+        erasure.target=c;erasure.lostTimer=rndF(4,9);
+      }
+    } else {
+      moveToward(erasure,erasure.target.x,erasure.target.y,erasure.spd*.85);
+      if(Math.sqrt((erasure.x-erasure.target.x)**2+(erasure.y-erasure.target.y)**2)<8){
+        erasure.lost=true;erasure.lostTimer=rndF(3,7);
+      }
+    }
+  }
+
+  // Death
+  if(dist<player.r+erasure.r+1&&state==='playing'){endGame('die');return;}
+
+  if(flashTimer>0)flashTimer-=dt;
+  for(const p of particles){p.x+=p.vx;p.y+=p.vy;p.life-=dt*1.4;p.vy+=0.07;}
+  particles=particles.filter(p=>p.life>0);
+}
+
+function spawnP(x,y,col){
+  for(let i=0;i<16;i++){const a=rndF(0,6.28);particles.push({x,y,vx:Math.cos(a)*rndF(.3,2.8),vy:Math.sin(a)*rndF(.3,2.8),life:rndF(.4,1.1),col});}
+}
+function flash(m){flashMsg=m;flashTimer=3.5;}
+
+function mkNoiseImageData(){
+  const id=ctx.createImageData(CW,CH),d=id.data;
+  for(let i=0;i<d.length;i+=4){
+    const v=Math.random()>.965?rnd(8,35):0;
+    d[i]=v;d[i+1]=Math.floor(v*1.35);d[i+2]=v;d[i+3]=v>0?90:0;
+  }
+  return id;
+}
+
+function draw(){
+  ctx.fillStyle='#050504';ctx.fillRect(0,0,CW,CH);
+
+  // Map tiles
+  for(let y=0;y<ROWS;y++){
+    for(let x=0;x<COLS;x++){
+      const px=x*TILE,py=y*TILE;
+      if(grid[y][x]===1){
+        const nv=noise2(x*.35+frameN*.003,y*.35)*.07;
+        const v=Math.floor(9+nv*55);
+        ctx.fillStyle=`rgb(${v},${Math.floor(v*1.1)},${v})`;
+        ctx.fillRect(px,py,TILE,TILE);
+      } else {
+        const nv=noise2(x*.55+frameN*.002,y*.55)*.04;
+        const v=Math.floor(17+nv*35);
+        ctx.fillStyle=`rgb(${v},${Math.floor(v*1.06)},${v})`;
+        ctx.fillRect(px,py,TILE,TILE);
+        ctx.strokeStyle='rgba(28,38,28,.25)';ctx.lineWidth=.3;
+        ctx.strokeRect(px+.5,py+.5,TILE-1,TILE-1);
+      }
+    }
+  }
+
+  // Evidence items
+  for(const e of evItems){
+    if(e.got)continue;
+    e.pulse+=.045;
+    const g=Math.sin(e.pulse)*.3+.7;
+    ctx.save();ctx.globalAlpha=.22*g;
+    ctx.beginPath();ctx.arc(e.x,e.y,e.r+9,0,6.28);ctx.fillStyle='#7ecba1';ctx.fill();
+    ctx.restore();
+    ctx.fillStyle=`rgba(126,203,161,${.55+.35*g})`;
+    ctx.beginPath();ctx.arc(e.x,e.y,e.r,0,6.28);ctx.fill();
+    ctx.fillStyle='rgba(0,15,8,.85)';ctx.fillRect(e.x-3,e.y-4,6,7);
+    ctx.fillStyle='rgba(126,203,161,.9)';ctx.fillRect(e.x-1,e.y+2,2,2);
+  }
+
+  // Player trail (heat dissipation)
+  for(let i=0;i<player.trail.length;i++){
+    const t=player.trail[i],a=(i/player.trail.length)*.28;
+    ctx.globalAlpha=a;ctx.beginPath();ctx.arc(t.x,t.y,2.5,0,6.28);ctx.fillStyle='#b07535';ctx.fill();
+  }
+  ctx.globalAlpha=1;
+
+  if(!hidden){
+    const g=ctx.createRadialGradient(player.x,player.y,0,player.x,player.y,24);
+    g.addColorStop(0,'rgba(210,170,80,.38)');g.addColorStop(1,'rgba(210,170,80,0)');
+    ctx.fillStyle=g;ctx.beginPath();ctx.arc(player.x,player.y,24,0,6.28);ctx.fill();
+    ctx.fillStyle='#cfb55e';ctx.beginPath();ctx.arc(player.x,player.y,player.r,0,6.28);ctx.fill();
+    // hotspot core
+    ctx.fillStyle='rgba(255,230,150,.7)';ctx.beginPath();ctx.arc(player.x,player.y,3,0,6.28);ctx.fill();
+    ctx.strokeStyle='rgba(255,255,200,.6)';ctx.lineWidth=1.5;
+    ctx.beginPath();ctx.moveTo(player.x,player.y);
+    ctx.lineTo(player.x+Math.cos(player.angle)*11,player.y+Math.sin(player.angle)*11);ctx.stroke();
+  } else {
+    ctx.globalAlpha=.22;ctx.fillStyle='#3a5a44';
+    ctx.beginPath();ctx.arc(player.x,player.y,player.r,0,6.28);ctx.fill();ctx.globalAlpha=1;
+    ctx.fillStyle='rgba(60,100,70,.65)';ctx.font='7px Share Tech Mono';ctx.textAlign='center';
+    ctx.fillText('CONCEALED',player.x,player.y-13);
+    if(hideTimer>0){ctx.fillText(Math.ceil(hideTimer)+'s',player.x,player.y+14);}
+  }
+
+  // ERASURE-7
+  const aware=erasure.aware;
+  const ec=aware>.75?'#c84a4a':aware>.3?'#c8751a':'#3a6a8a';
+  ctx.globalAlpha=.28+aware*.55;
+  ctx.strokeStyle=ec;ctx.lineWidth=.5;
+  ctx.beginPath();ctx.arc(erasure.x,erasure.y,erasure.r+7+aware*9,0,6.28);ctx.stroke();
+  if(aware>.5){
+    ctx.globalAlpha=.1+aware*.12;
+    ctx.beginPath();ctx.arc(erasure.x,erasure.y,erasure.r+18+aware*5,0,6.28);ctx.stroke();
+  }
+  ctx.globalAlpha=1;
+  ctx.fillStyle=ec;ctx.beginPath();ctx.arc(erasure.x,erasure.y,erasure.r,0,6.28);ctx.fill();
+  ctx.fillStyle='rgba(0,0,0,.55)';ctx.beginPath();ctx.arc(erasure.x,erasure.y,3,0,6.28);ctx.fill();
+  ctx.fillStyle=ec;ctx.globalAlpha=.8;ctx.font='7px Share Tech Mono';ctx.textAlign='center';
+  ctx.fillText('ERASURE-7',erasure.x,erasure.y-erasure.r-5);ctx.globalAlpha=1;
+
+  // Particles
+  for(const p of particles){
+    ctx.globalAlpha=Math.max(0,p.life);ctx.fillStyle=p.col;
+    ctx.beginPath();ctx.arc(p.x,p.y,2,0,6.28);ctx.fill();
+  }
+  ctx.globalAlpha=1;
+
+  // Scan line
+  scanY=(scanY+1.5)%CH;
+  ctx.fillStyle='rgba(126,203,161,.022)';ctx.fillRect(0,scanY,CW,2);
+
+  // Vignette
+  const vg=ctx.createRadialGradient(CW/2,CH/2,CH*.27,CW/2,CH/2,CH*.92);
+  vg.addColorStop(0,'rgba(0,0,0,0)');vg.addColorStop(1,'rgba(0,0,0,.68)');
+  ctx.fillStyle=vg;ctx.fillRect(0,0,CW,CH);
+
+  // Alert pulse when locked on
+  if(aware>.8){
+    ctx.fillStyle=`rgba(200,70,70,${Math.sin(frameN*.28)*.045+.025})`;
+    ctx.fillRect(0,0,CW,CH);
+  }
+
+  // Evidence HUD corner
+  ctx.fillStyle='rgba(0,0,0,.7)';ctx.fillRect(8,8,84,evidence>=5?99:87);
+  ctx.strokeStyle='#1a2a1a';ctx.lineWidth=.4;ctx.strokeRect(8,8,84,evidence>=5?99:87);
+  ctx.font='7px Share Tech Mono';ctx.textAlign='left';
+  ctx.fillStyle='#1a2a1a';ctx.fillText('EVIDENCE',12,20);
+  for(let i=0;i<5;i++){
+    ctx.fillStyle=i<evidence?'#7ecba1':'#0e1a0e';ctx.fillRect(12,24+i*14,72,10);
+    ctx.fillStyle=i<evidence?'#000':'#182018';ctx.font='7px Share Tech Mono';
+    ctx.fillText(i<evidence?'SECURED':'[ MISSING ]',14,32+i*14);
+  }
+  if(evidence>=5&&!legalHold){
+    ctx.fillStyle='rgba(126,203,161,.9)';ctx.font='8px Share Tech Mono';
+    ctx.fillText('→ PRESS F',12,24+5*14+10);
+  }
+
+  // Flash message
+  if(flashTimer>0){
+    const a=Math.min(1,flashTimer);
+    ctx.globalAlpha=a;ctx.font='10px Share Tech Mono';ctx.textAlign='center';
+    ctx.fillStyle='#7ecba1';ctx.fillText(flashMsg,CW/2,CH-18);ctx.globalAlpha=1;
+  }
+
+  // CRT noise (every 3 frames)
+  if(frameN%3===0)noiseCache=mkNoiseImageData();
+  if(noiseCache){ctx.globalAlpha=.5;ctx.putImageData(noiseCache,0,0);ctx.globalAlpha=1;}
+}
+
+function endGame(r){
+  if(state!=='playing')return;
+  state=r;
+  if(r==='die'){
+    document.getElementById('gt').textContent=fmtT(survived);
+    document.getElementById('ge').textContent=evidence;
+    document.getElementById('gh').textContent=legalHold?'YES':'NO';
+    document.getElementById('gameover').style.display='flex';
+  } else {
+    document.getElementById('win').style.display='flex';
+  }
+}
+function fmtT(s){return Math.floor(s/60)+'m '+Math.floor(s%60)+'s';}
+
+function startGame(){
+  document.getElementById('overlay').style.display='none';
+  state='playing';initGame();lastT=performance.now();
+  requestAnimationFrame(loop);
+}
+function restartGame(){
+  document.getElementById('gameover').style.display='none';
+  document.getElementById('win').style.display='none';
+  state='playing';initGame();lastT=performance.now();
+  requestAnimationFrame(loop);
+}
+
+document.addEventListener('keydown',e=>{
+  keys[e.key.toLowerCase()]=true;
+  if(state==='playing'){
+    if(e.key.toLowerCase()==='h'&&!hidden&&hideCooldown<=0){
+      hidden=true;hideTimer=3.5;flash('CONCEALED — 3 SECONDS');
+    }
+    if(e.key.toLowerCase()==='f'&&evidence>=5&&!legalHold){
+      legalHold=true;flash('LEGAL HOLD FILED — ERASURE-7 SUSPENDED');
+      setTimeout(()=>endGame('win'),2600);state='ending';
+    }
+  }
+  if(['arrowup','arrowdown','arrowleft','arrowright',' '].includes(e.key))e.preventDefault();
+});
+document.addEventListener('keyup',e=>{keys[e.key.toLowerCase()]=false;});
+
+// Draw a static frame
+ctx.fillStyle='#050504';ctx.fillRect(0,0,CW,CH);
+ctx.font='10px Share Tech Mono';ctx.fillStyle='#1a2a1a';ctx.textAlign='center';
+ctx.fillText('AWAITING SESSION INITIATION',CW/2,CH/2);
+</script>
+</body>
+</html>
