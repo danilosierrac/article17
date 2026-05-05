@@ -551,7 +551,7 @@ function draw(){
 }
 
 function endGame(r){
-  if(state!=='playing')return;
+  if(state!=='playing'&&state!=='ending')return;
   state=r;
   if(r==='die'){
     document.getElementById('gt').textContent=fmtT(survived);
