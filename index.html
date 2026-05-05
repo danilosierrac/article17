@@ -19,7 +19,7 @@ canvas{display:block;}
 .ctl{display:flex;gap:4px;align-items:center;}
 .key{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border:1px solid #2a2a2a;font-size:9px;color:#444;}
 .cl{font-size:9px;color:#2a2a2a;margin:0 3px;}
-#overlay,#gameover,#win{position:absolute;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.9);display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;z-index:10;padding:2rem;}
+#overlay,#gameover,#win{position:absolute;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.92);display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;z-index:10;padding:2rem;}
 #gameover,#win{display:none;}
 .ot{font-size:26px;letter-spacing:.15em;margin-bottom:5px;}
 .og{color:#7ecba1;}.or{color:#c84a4a;}
@@ -51,10 +51,10 @@ canvas{display:block;}
     <div class="ot og">ARTICLE 17</div>
     <div class="os">LETHE CORP · THERMAL SATELLITE · ENFORCEMENT DIVISION</div>
     <div class="ob">You submitted a GDPR deletion request to Lethe Corp.<br><span class="r">ERASURE-7 has been dispatched to your location.</span><br><br>
-    Collect <span class="r">5 evidence files</span> scattered through the city block.<br>
-    Press <span class="r">F</span> to file a legal hold — it freezes the queue.<br>
-    ERASURE cannot process a contested record.<br><br>
-    Press <span class="r">H</span> to hide (3 sec cooldown). Stay out of sight.</div>
+    Collect <span class="r">5 evidence files</span> to build a legal case.<br>
+    Press <span class="r">F</span> to file a legal hold once you have them all.<br><br>
+    Press <span class="r">H</span> to hide — 2 seconds, 8 second cooldown.<br>
+    <span class="r">Stay still. Move quietly. It is faster than you.</span></div>
     <button class="btn bg" onclick="startGame()">INITIATE SESSION</button>
   </div>
   <div id="gameover">
@@ -84,17 +84,27 @@ canvas{display:block;}
 const canvas=document.getElementById('c');
 const ctx=canvas.getContext('2d');
 const CW=640,CH=480,TILE=32,COLS=20,ROWS=15;
+const FOV_R=95; // player visibility radius (px)
 
-let state='idle',player,erasure,evItems,particles,keys={};
+// Offscreen fog canvas
+const fogCvs=document.createElement('canvas');
+fogCvs.width=CW;fogCvs.height=CH;
+const fogCtx=fogCvs.getContext('2d');
+
+// Offscreen noise canvas — putImageData here, drawImage onto main (preserves compositing)
+const noiseCvs=document.createElement('canvas');
+noiseCvs.width=CW;noiseCvs.height=CH;
+const noiseCtx=noiseCvs.getContext('2d');
+
+let state='idle',player,erasure,evItems,particles,noiseRings,keys={};
 let evidence=0,survived=0,legalHold=false;
 let hidden=false,hideTimer=0,hideCooldown=0;
 let flashMsg='',flashTimer=0,scanY=0,frameN=0;
-let grid=[],rooms=[],noiseCache=null,noiseCacheFrame=-1;
+let grid=[],rooms=[];
 
 function rnd(a,b){return Math.floor(Math.random()*(b-a))+a;}
 function rndF(a,b){return Math.random()*(b-a)+a;}
 
-// Value noise
 const NT=new Float32Array(512);for(let i=0;i<512;i++)NT[i]=Math.random();
 function noise2(x,y){
   const xi=Math.floor(x)&255,yi=Math.floor(y)&255;
@@ -151,7 +161,11 @@ function tryMove(e,dx,dy){
 function moveToward(e,tx,ty,spd){
   const dx=tx-e.x,dy=ty-e.y,d=Math.sqrt(dx*dx+dy*dy);
   if(d<2)return;
+  const px=e.x,py=e.y;
   tryMove(e,dx/d*spd,dy/d*spd);
+  // Track facing angle from actual movement
+  const moved=Math.abs(e.x-px)+Math.abs(e.y-py);
+  if(moved>0.05)e.angle=Math.atan2(e.y-py,e.x-px);
 }
 function hasLOS(ax,ay,bx,by){
   const dx=bx-ax,dy=by-ay,steps=Math.ceil(Math.sqrt(dx*dx+dy*dy)/6);
@@ -159,21 +173,34 @@ function hasLOS(ax,ay,bx,by){
   return true;
 }
 
+// Angle diff, returns 0..PI
+function angleDiff(a,b){
+  let d=((a-b)+Math.PI*3)%(Math.PI*2)-Math.PI;
+  return Math.abs(d);
+}
+
 function initGame(){
   genMap();
   evidence=0;survived=0;legalHold=false;hidden=false;hideTimer=0;hideCooldown=0;
-  flashMsg='';flashTimer=0;scanY=0;frameN=0;particles=[];
+  flashMsg='';flashTimer=0;scanY=0;frameN=0;particles=[];noiseRings=[];
 
   const p=tc(rooms[0].cx,rooms[0].cy);
-  player={x:p.x,y:p.y,r:6,spd:2.3,angle:0,trail:[]};
+  player={x:p.x,y:p.y,r:6,spd:2.3,angle:0,trail:[],moving:false};
 
   const e=tc(rooms[rooms.length-1].cx,rooms[rooms.length-1].cy);
-  erasure={x:e.x,y:e.y,r:7,spd:0.88,aware:0,lost:true,lostTimer:7,target:{x:e.x,y:e.y}};
+  erasure={
+    x:e.x,y:e.y,r:7,
+    patrolSpd:1.2,chaseSpd:2.9,
+    aware:0,lost:true,lostTimer:7,
+    target:{x:e.x,y:e.y},
+    angle:Math.PI,
+    investigating:false
+  };
 
   evItems=[];
   for(let i=1;i<rooms.length&&evItems.length<5;i++){
     const c=tc(rooms[i].cx,rooms[i].cy);
-    evItems.push({x:c.x+rnd(-8,8),y:c.y+rnd(-8,8),r:5,got:false,pulse:rndF(0,6.28)});
+    evItems.push({x:c.x+rnd(-10,10),y:c.y+rnd(-10,10),r:5,got:false,pulse:rndF(0,6.28)});
   }
   upHUD();
 }
@@ -185,6 +212,8 @@ function upHUD(){
   document.getElementById('ht').textContent=pad(h)+':'+pad(m)+':'+pad(s);
   const el=document.getElementById('hs');
   if(erasure.aware>.75){el.textContent='LOCKED ON';el.className='hv d';}
+  else if(erasure.aware>.1){el.textContent='ALERT';el.className='hv d';}
+  else if(erasure.investigating){el.textContent='INVESTIGATING';el.className='hv w';}
   else if(erasure.lost){el.textContent='SEARCHING';el.className='hv w';}
   else{el.textContent='TRACKING';el.className='hv w';}
 }
@@ -201,20 +230,41 @@ function loop(ts){
 
 function update(dt){
   // Player movement
-  if(!hidden){
-    let mx=(keys['a']||keys['arrowleft']?-1:0)+(keys['d']||keys['arrowright']?1:0);
-    let my=(keys['w']||keys['arrowup']?-1:0)+(keys['s']||keys['arrowdown']?1:0);
-    if(mx||my){
-      const d=Math.sqrt(mx*mx+my*my);mx/=d;my/=d;
-      tryMove(player,mx*player.spd,my*player.spd);
-      player.angle=Math.atan2(my,mx);
-    }
+  const mk=k=>keys[k]||false;
+  let mx=(mk('a')||mk('arrowleft')?-1:0)+(mk('d')||mk('arrowright')?1:0);
+  let my=(mk('w')||mk('arrowup')?-1:0)+(mk('s')||mk('arrowdown')?1:0);
+  player.moving=!!(mx||my);
+
+  if(!hidden&&player.moving){
+    const d=Math.sqrt(mx*mx+my*my);mx/=d;my/=d;
+    tryMove(player,mx*player.spd,my*player.spd);
+    player.angle=Math.atan2(my,mx);
   }
   player.trail.push({x:player.x,y:player.y});
   if(player.trail.length>16)player.trail.shift();
 
-  if(hideTimer>0){hideTimer-=dt;if(hideTimer<=0){hidden=false;hideTimer=0;hideCooldown=4;flash('EXPOSED — COOLDOWN 4s');}}
+  if(hideTimer>0){hideTimer-=dt;if(hideTimer<=0){hidden=false;hideTimer=0;hideCooldown=8;flash('EXPOSED — COOLDOWN 8s');}}
   if(hideCooldown>0)hideCooldown-=dt;
+
+  // Noise rings — emit when moving, ERASURE-7 investigates
+  if(player.moving&&!hidden&&frameN%20===0){
+    noiseRings.push({x:player.x,y:player.y,r:0,maxR:78,life:1,fresh:true});
+  }
+  for(const ring of noiseRings){
+    ring.r+=1.9;
+    ring.life=1-ring.r/ring.maxR;
+    // Erasure hears noise even without LOS
+    if(ring.fresh&&ring.r>28){
+      ring.fresh=false;
+      const nd=Math.sqrt((erasure.x-ring.x)**2+(erasure.y-ring.y)**2);
+      if(nd<175&&erasure.aware<0.5){
+        erasure.target={x:ring.x+rnd(-20,20),y:ring.y+rnd(-20,20)};
+        erasure.lost=false;
+        erasure.investigating=true;
+      }
+    }
+  }
+  noiseRings=noiseRings.filter(r=>r.r<r.maxR);
 
   // Collect evidence
   for(const e of evItems){
@@ -227,33 +277,52 @@ function update(dt){
     }
   }
 
-  // Erasure AI
+  // ERASURE-7 AI — cone-based detection + proximity catch
   const dist=Math.sqrt((erasure.x-player.x)**2+(erasure.y-player.y)**2);
-  const sees=!hidden&&dist<230&&hasLOS(erasure.x,erasure.y,player.x,player.y);
+  const angleToPlayer=Math.atan2(player.y-erasure.y,player.x-erasure.x);
+  const adiff=angleDiff(angleToPlayer,erasure.angle);
+
+  // Cone widens and extends on alert
+  const coneR=erasure.aware>0.3?165:115;
+  const coneHalf=erasure.aware>0.3?Math.PI*0.5:Math.PI*0.37;
+  const inCone=dist<coneR&&adiff<coneHalf;
+  const inProximity=dist<38; // detected regardless of angle
+  const sees=!hidden&&(inCone||inProximity)&&hasLOS(erasure.x,erasure.y,player.x,player.y);
+
   if(sees){
-    erasure.aware=Math.min(1,erasure.aware+dt*0.55);
+    erasure.aware=Math.min(1,erasure.aware+dt*0.6);
     erasure.target={x:player.x,y:player.y};
     erasure.lost=false;
-    moveToward(erasure,player.x,player.y,erasure.spd+erasure.aware*1.1);
+    erasure.investigating=false;
+    // Chase speed scales with awareness — at full aware: 2.9, faster than player 2.3
+    const spd=erasure.patrolSpd+(erasure.chaseSpd-erasure.patrolSpd)*erasure.aware;
+    moveToward(erasure,player.x,player.y,spd);
   } else {
-    erasure.aware=Math.max(0,erasure.aware-dt*0.22);
+    erasure.aware=Math.max(0,erasure.aware-dt*0.18);
+    if(erasure.aware<0.05)erasure.investigating=false;
+
     if(erasure.lost){
       erasure.lostTimer-=dt;
-      moveToward(erasure,erasure.target.x,erasure.target.y,erasure.spd*.6);
+      moveToward(erasure,erasure.target.x,erasure.target.y,erasure.patrolSpd*.65);
       if(erasure.lostTimer<=0){
         const rm=rooms[rnd(0,rooms.length)];
         const c=tc(rm.cx,rm.cy);
-        erasure.target=c;erasure.lostTimer=rndF(4,9);
+        erasure.target=c;
+        erasure.lostTimer=rndF(4,9);
+        erasure.investigating=false;
       }
     } else {
-      moveToward(erasure,erasure.target.x,erasure.target.y,erasure.spd*.85);
-      if(Math.sqrt((erasure.x-erasure.target.x)**2+(erasure.y-erasure.target.y)**2)<8){
-        erasure.lost=true;erasure.lostTimer=rndF(3,7);
+      // Move toward last known / noise target
+      const spd=erasure.aware>0.1?erasure.patrolSpd*1.3:erasure.patrolSpd*0.9;
+      moveToward(erasure,erasure.target.x,erasure.target.y,spd);
+      if(Math.sqrt((erasure.x-erasure.target.x)**2+(erasure.y-erasure.target.y)**2)<12){
+        erasure.lost=true;
+        // Linger longer at last known position when aware (you hid mid-chase)
+        erasure.lostTimer=erasure.aware>0.3?rndF(6,12):rndF(3,7);
       }
     }
   }
 
-  // Death
   if(dist<player.r+erasure.r+1&&state==='playing'){endGame('die');return;}
 
   if(flashTimer>0)flashTimer-=dt;
@@ -266,13 +335,64 @@ function spawnP(x,y,col){
 }
 function flash(m){flashMsg=m;flashTimer=3.5;}
 
-function mkNoiseImageData(){
-  const id=ctx.createImageData(CW,CH),d=id.data;
+function updateNoise(){
+  const id=noiseCtx.createImageData(CW,CH),d=id.data;
   for(let i=0;i<d.length;i+=4){
     const v=Math.random()>.965?rnd(8,35):0;
     d[i]=v;d[i+1]=Math.floor(v*1.35);d[i+2]=v;d[i+3]=v>0?90:0;
   }
-  return id;
+  noiseCtx.putImageData(id,0,0);
+}
+
+// Fog: darkness with player FOV cutout
+function applyFog(){
+  fogCtx.clearRect(0,0,CW,CH);
+  fogCtx.fillStyle='#000';
+  fogCtx.fillRect(0,0,CW,CH);
+
+  fogCtx.globalCompositeOperation='destination-out';
+  const vr=hidden?FOV_R*0.4:FOV_R;
+  const g=fogCtx.createRadialGradient(player.x,player.y,0,player.x,player.y,vr);
+  g.addColorStop(0,'rgba(0,0,0,1)');
+  g.addColorStop(0.62,'rgba(0,0,0,0.85)');
+  g.addColorStop(1,'rgba(0,0,0,0)');
+  fogCtx.fillStyle=g;
+  fogCtx.fillRect(0,0,CW,CH);
+  fogCtx.globalCompositeOperation='source-over';
+
+  ctx.globalAlpha=0.93;
+  ctx.drawImage(fogCvs,0,0);
+  ctx.globalAlpha=1;
+}
+
+// ERASURE-7 scan cone (drawn after fog — always visible through darkness)
+function drawCone(){
+  const aw=erasure.aware;
+  const coneR=aw>0.3?165:115;
+  const coneHalf=aw>0.3?Math.PI*0.5:Math.PI*0.37;
+  const col=aw>0.75?'#c84a4a':aw>0.3?'#c8751a':'#3a6a8a';
+
+  // Soft cone fill
+  ctx.save();
+  ctx.globalAlpha=0.1+aw*0.12;
+  ctx.fillStyle=col;
+  ctx.beginPath();
+  ctx.moveTo(erasure.x,erasure.y);
+  ctx.arc(erasure.x,erasure.y,coneR,erasure.angle-coneHalf,erasure.angle+coneHalf);
+  ctx.closePath();
+  ctx.fill();
+
+  // Cone edge lines
+  ctx.globalAlpha=0.18+aw*0.15;
+  ctx.strokeStyle=col;
+  ctx.lineWidth=0.6;
+  ctx.beginPath();
+  ctx.moveTo(erasure.x,erasure.y);
+  ctx.lineTo(erasure.x+Math.cos(erasure.angle-coneHalf)*coneR,erasure.y+Math.sin(erasure.angle-coneHalf)*coneR);
+  ctx.moveTo(erasure.x,erasure.y);
+  ctx.lineTo(erasure.x+Math.cos(erasure.angle+coneHalf)*coneR,erasure.y+Math.sin(erasure.angle+coneHalf)*coneR);
+  ctx.stroke();
+  ctx.restore();
 }
 
 function draw(){
@@ -298,7 +418,7 @@ function draw(){
     }
   }
 
-  // Evidence items
+  // Evidence items (drawn before fog — visible only inside FOV)
   for(const e of evItems){
     if(e.got)continue;
     e.pulse+=.045;
@@ -312,19 +432,31 @@ function draw(){
     ctx.fillStyle='rgba(126,203,161,.9)';ctx.fillRect(e.x-1,e.y+2,2,2);
   }
 
-  // Player trail (heat dissipation)
+  // Noise rings (before fog — they fade into darkness as they expand)
+  for(const ring of noiseRings){
+    ctx.save();
+    ctx.globalAlpha=ring.life*0.38;
+    ctx.strokeStyle='#7ecba1';
+    ctx.lineWidth=0.8;
+    ctx.setLineDash([3,4]);
+    ctx.beginPath();ctx.arc(ring.x,ring.y,ring.r,0,6.28);ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
+
+  // Player trail
   for(let i=0;i<player.trail.length;i++){
     const t=player.trail[i],a=(i/player.trail.length)*.28;
     ctx.globalAlpha=a;ctx.beginPath();ctx.arc(t.x,t.y,2.5,0,6.28);ctx.fillStyle='#b07535';ctx.fill();
   }
   ctx.globalAlpha=1;
 
+  // Player
   if(!hidden){
     const g=ctx.createRadialGradient(player.x,player.y,0,player.x,player.y,24);
     g.addColorStop(0,'rgba(210,170,80,.38)');g.addColorStop(1,'rgba(210,170,80,0)');
     ctx.fillStyle=g;ctx.beginPath();ctx.arc(player.x,player.y,24,0,6.28);ctx.fill();
     ctx.fillStyle='#cfb55e';ctx.beginPath();ctx.arc(player.x,player.y,player.r,0,6.28);ctx.fill();
-    // hotspot core
     ctx.fillStyle='rgba(255,230,150,.7)';ctx.beginPath();ctx.arc(player.x,player.y,3,0,6.28);ctx.fill();
     ctx.strokeStyle='rgba(255,255,200,.6)';ctx.lineWidth=1.5;
     ctx.beginPath();ctx.moveTo(player.x,player.y);
@@ -337,15 +469,21 @@ function draw(){
     if(hideTimer>0){ctx.fillText(Math.ceil(hideTimer)+'s',player.x,player.y+14);}
   }
 
-  // ERASURE-7
-  const aware=erasure.aware;
-  const ec=aware>.75?'#c84a4a':aware>.3?'#c8751a':'#3a6a8a';
-  ctx.globalAlpha=.28+aware*.55;
+  // — FOG LAYER — everything below is always visible through darkness
+  applyFog();
+
+  // ERASURE-7 scan cone (after fog — visible at any range)
+  drawCone();
+
+  // ERASURE-7 body
+  const aw=erasure.aware;
+  const ec=aw>.75?'#c84a4a':aw>.3?'#c8751a':'#3a6a8a';
+  ctx.globalAlpha=.3+aw*.55;
   ctx.strokeStyle=ec;ctx.lineWidth=.5;
-  ctx.beginPath();ctx.arc(erasure.x,erasure.y,erasure.r+7+aware*9,0,6.28);ctx.stroke();
-  if(aware>.5){
-    ctx.globalAlpha=.1+aware*.12;
-    ctx.beginPath();ctx.arc(erasure.x,erasure.y,erasure.r+18+aware*5,0,6.28);ctx.stroke();
+  ctx.beginPath();ctx.arc(erasure.x,erasure.y,erasure.r+7+aw*9,0,6.28);ctx.stroke();
+  if(aw>.5){
+    ctx.globalAlpha=.1+aw*.12;
+    ctx.beginPath();ctx.arc(erasure.x,erasure.y,erasure.r+18+aw*5,0,6.28);ctx.stroke();
   }
   ctx.globalAlpha=1;
   ctx.fillStyle=ec;ctx.beginPath();ctx.arc(erasure.x,erasure.y,erasure.r,0,6.28);ctx.fill();
@@ -369,13 +507,13 @@ function draw(){
   vg.addColorStop(0,'rgba(0,0,0,0)');vg.addColorStop(1,'rgba(0,0,0,.68)');
   ctx.fillStyle=vg;ctx.fillRect(0,0,CW,CH);
 
-  // Alert pulse when locked on
-  if(aware>.8){
+  // Alert pulse
+  if(aw>.8){
     ctx.fillStyle=`rgba(200,70,70,${Math.sin(frameN*.28)*.045+.025})`;
     ctx.fillRect(0,0,CW,CH);
   }
 
-  // Evidence HUD corner
+  // HUD — evidence list
   ctx.fillStyle='rgba(0,0,0,.7)';ctx.fillRect(8,8,84,evidence>=5?99:87);
   ctx.strokeStyle='#1a2a1a';ctx.lineWidth=.4;ctx.strokeRect(8,8,84,evidence>=5?99:87);
   ctx.font='7px Share Tech Mono';ctx.textAlign='left';
@@ -390,16 +528,26 @@ function draw(){
     ctx.fillText('→ PRESS F',12,24+5*14+10);
   }
 
+  // Hide cooldown indicator
+  if(hideCooldown>0){
+    const bar=Math.min(1,hideCooldown/8);
+    ctx.fillStyle='rgba(0,0,0,.7)';ctx.fillRect(8,CH-22,84,14);
+    ctx.strokeStyle='#1a2a1a';ctx.lineWidth=.4;ctx.strokeRect(8,CH-22,84,14);
+    ctx.fillStyle='#1a3a28';ctx.fillRect(10,CH-20,Math.floor(80*bar),10);
+    ctx.font='7px Share Tech Mono';ctx.fillStyle='#2a4a38';ctx.textAlign='left';
+    ctx.fillText('HIDE COOLDOWN',12,CH-12);
+  }
+
   // Flash message
   if(flashTimer>0){
     const a=Math.min(1,flashTimer);
     ctx.globalAlpha=a;ctx.font='10px Share Tech Mono';ctx.textAlign='center';
-    ctx.fillStyle='#7ecba1';ctx.fillText(flashMsg,CW/2,CH-18);ctx.globalAlpha=1;
+    ctx.fillStyle='#7ecba1';ctx.fillText(flashMsg,CW/2,CH-34);ctx.globalAlpha=1;
   }
 
-  // CRT noise (every 3 frames)
-  if(frameN%3===0)noiseCache=mkNoiseImageData();
-  if(noiseCache){ctx.globalAlpha=.5;ctx.putImageData(noiseCache,0,0);ctx.globalAlpha=1;}
+  // CRT noise every 3 frames — drawImage preserves compositing unlike putImageData
+  if(frameN%3===0)updateNoise();
+  ctx.drawImage(noiseCvs,0,0);
 }
 
 function endGame(r){
@@ -432,7 +580,7 @@ document.addEventListener('keydown',e=>{
   keys[e.key.toLowerCase()]=true;
   if(state==='playing'){
     if(e.key.toLowerCase()==='h'&&!hidden&&hideCooldown<=0){
-      hidden=true;hideTimer=3.5;flash('CONCEALED — 3 SECONDS');
+      hidden=true;hideTimer=2.2;flash('CONCEALED — 2 SECONDS');
     }
     if(e.key.toLowerCase()==='f'&&evidence>=5&&!legalHold){
       legalHold=true;flash('LEGAL HOLD FILED — ERASURE-7 SUSPENDED');
@@ -443,7 +591,6 @@ document.addEventListener('keydown',e=>{
 });
 document.addEventListener('keyup',e=>{keys[e.key.toLowerCase()]=false;});
 
-// Draw a static frame
 ctx.fillStyle='#050504';ctx.fillRect(0,0,CW,CH);
 ctx.font='10px Share Tech Mono';ctx.fillStyle='#1a2a1a';ctx.textAlign='center';
 ctx.fillText('AWAITING SESSION INITIATION',CW/2,CH/2);
